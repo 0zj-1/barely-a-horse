@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "barely-a-horse",
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": [
+        "-c",
+        "source ~/.nvm/nvm.sh >/dev/null && nvm use 22 >/dev/null && npm run dev"
+      ],
+      "port": 5173
+    }
+  ]
+}

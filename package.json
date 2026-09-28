@@ -1,0 +1,26 @@
+{
+  "name": "barely-a-horse",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "deploy": "npm run build && npm run deploy -w client",
+    "start": "npm run start -w server",
+    "typecheck": "tsc -p shared --noEmit && tsc -p server --noEmit && tsc -p server/tsconfig.worker.json --noEmit && tsc -p client --noEmit",
+    "cf-typegen": "wrangler types server/worker-configuration.d.ts",
+    "smoke": "npm run smoke -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
