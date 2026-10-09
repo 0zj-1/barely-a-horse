@@ -146,6 +146,59 @@ async function main() {
 
   for (const b of [host, masher, back]) b.s.connect(null);
 
+  // ---- voice: shouting is a second way to push the horse ----
+  console.log('  -- voice --');
+  const shouter = bot(), quiet = bot();
+  const created2 = await create(shouter, 'Shouty');
+  const vCode = created2.session.roomCode;
+  const shoutId = created2.session.playerId;
+  const shoutTicks: any[] = [];
+  shouter.s.on('race:tick', (t) => shoutTicks.push(t));
+  await join(quiet, vCode, 'Quiet');
+  for (const b of [shouter, quiet]) {
+    b.s.emit('player:startDrawing');
+    await sleep(80);
+    await call<any>((a) => b.s.emit('player:submitDrawing', { drawing: scribble }, a));
+  }
+  await call<any>((a) => shouter.s.emit('host:startRace', a));
+  await waitPhase(shouter, 'RACING', 6000);
+  const obstacles = shouter.state.snap!.obstacles;
+  assert(obstacles.length > 0 && obstacles.every((o) => o.at > 0 && o.at < 100), `${obstacles.length} obstacles on the track`);
+  assert(quiet.state.snap!.obstacles.every((o, i) => o.at === obstacles[i].at && o.kind === obstacles[i].kind), 'every lane gets the same obstacles');
+  // Shouty also strikes the right pose for each obstacle; Quiet ignores them.
+  let posed = 0;
+  const posing = setInterval(() => {
+    const tick = shoutTicks.at(-1);
+    const me = tick?.horses.find((h: any) => h.id === shoutId);
+    if (!me) return;
+    const next = obstacles.find((o) => o.at > me.pos);
+    if (next && next.at - me.pos < 7) {
+      shouter.s.emit('race:pose', { pose: next.kind === 'DUCK' ? 'DUCK' : next.kind === 'JUMP' ? 'JUMP' : 'BIGJUMP' });
+      posed++;
+    }
+    quiet.s.emit('race:pose', { pose: 'NONSENSE' as never }); // must be ignored
+  }, 80);
+  // Shout in bursts: ~2s on, 1s off. Junk values must not break anything.
+  const t0 = Date.now();
+  const junk = [NaN, Infinity, -5, 42, 'loud' as unknown as number];
+  let junkIdx = 0;
+  const shouting = setInterval(() => {
+    const on = ((Date.now() - t0) / 1000) % 3 < 2;
+    shouter.s.emit('race:shout', { level: on ? 1 : 0 });
+    quiet.s.emit('race:shout', { level: junk[junkIdx++ % junk.length] });
+  }, 100);
+  await waitPhase(shouter, 'RESULTS', 60_000);
+  clearInterval(shouting);
+  clearInterval(posing);
+  assert(posed > 0, 'poses were sent while approaching obstacles');
+  const vres = shouter.state.snap!.results!;
+  console.log('  voice race:', vres.map((r) => `${r.nickname} ${(r.timeMs! / 1000).toFixed(2)}s`).join(' | '));
+  assert(vres[0].nickname === 'Shouty', 'shouting beats doing nothing');
+  const quietTime = vres.find((r) => r.nickname === 'Quiet')!.timeMs!;
+  assert(quietTime > 15_000, `junk shout levels gave no boost (Quiet ${(quietTime / 1000).toFixed(2)}s)`);
+  shouter.s.connect(null);
+  quiet.s.connect(null);
+
   // ---- bots: a lonely player gets auto-filled opponents ----
   console.log('  -- bots --');
   const solo = bot();

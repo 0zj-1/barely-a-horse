@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ROOM, type PlayerPublic } from '@bah/shared';
 import { HorseThumb } from '../HorseThumb';
+import { MicCheck } from '../MicCheck';
 import { addBot, leaveRoom, removeBot, startDrawing, startRace, useStore } from '../store';
 
 export function PlayerList({ compact = false }: { compact?: boolean }) {
@@ -120,6 +121,9 @@ export function Lobby() {
               </button>
             </>
           )}
+          <hr />
+          <p className="hint">shout to run and jump — check it works before the race:</p>
+          <MicCheck />
           <hr />
           {isHost ? (
             <>

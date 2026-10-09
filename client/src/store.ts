@@ -6,6 +6,7 @@ import {
   type PlayerId,
   type RaceEvent,
   type RaceTick,
+  type Pose,
   type RoomSnapshot,
   type Session,
 } from '@bah/shared';
@@ -243,11 +244,15 @@ export const removeBot = (playerId: PlayerId) =>
   );
 
 export const giddyUp = () => socket.emit('race:giddy');
+/** Mic loudness 0..1 (+ pitch in Hz). The server clamps it and owns the resulting speed. */
+export const shout = (level: number, pitch = 0, base = 0) => socket.emit('race:shout', { level, pitch, base });
+/** Keyboard / touch pose, for players without a microphone. */
+export const setPose = (pose: Pose) => socket.emit('race:pose', { pose });
 
 // This module owns the socket listeners and session: hot-swapping it would
 // leave a stale store behind, so do a full reload (which resumes the session).
 if (import.meta.hot) import.meta.hot.accept(() => location.reload());
 
 if (import.meta.env.DEV) {
-  (window as unknown as { __bah: unknown }).__bah = { raceBuffer, getStore };
+  (window as unknown as { __bah: unknown }).__bah = { raceBuffer, getStore, shout, giddyUp, setPose };
 }

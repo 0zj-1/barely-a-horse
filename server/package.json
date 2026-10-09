@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "NODE_ENV=production tsx src/index.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "bot": "tsx scripts/bot.ts"
+    "bot": "tsx scripts/bot.ts",
+    "balance": "tsx scripts/balance.ts"
   },
   "dependencies": {
     "@bah/shared": "*",

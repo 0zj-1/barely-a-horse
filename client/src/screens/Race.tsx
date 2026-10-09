@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { RACE } from '@bah/shared';
+import { OBSTACLE_LABEL, RACE, type Pose } from '@bah/shared';
 import { serverNow } from '../net/socket';
 import { TrackRenderer, sampleTicks, type Lane } from '../render/track';
-import { getStore, giddyUp, raceBuffer, useStore } from '../store';
+import { startMic, micBlockedReason, MicError, type Mic, type MicReading } from '../net/mic';
+import { getStore, giddyUp, raceBuffer, setPose, shout, useStore } from '../store';
 import { RoomHeader } from './Lobby';
 
 const INTERP_DELAY = 110; // ms behind the server, so we always have two ticks to blend
+const SHOUT_SEND_MS = 100; // how often the mic level goes to the server
+const MIC_PREF = 'bah.mic';
+const POSE_REFRESH_MS = 300; // keyboard/touch poses expire on the server unless refreshed
+
+const POSE_LABEL: Record<Pose, string> = {
+  RUN: 'RUNNING',
+  DUCK: 'DUCKING',
+  JUMP: 'JUMPING',
+  BIGJUMP: 'BIG JUMP!',
+};
 
 /** COUNTDOWN and RACING share this screen. */
 export function Race() {
@@ -17,6 +28,17 @@ export function Race() {
   const windRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<HTMLSpanElement>(null);
   const [pressed, setPressed] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [micError, setMicError] = useState<string | null>(() => {
+    const blocked = micBlockedReason();
+    return blocked ? `${blocked.message} — ${blocked.fix}` : null;
+  });
+  const micRef = useRef<Mic | null>(null);
+  const readingRef = useRef<MicReading>({ level: 0, pitch: 0, base: 0 });
+  const voiceRef = useRef<HTMLDivElement>(null);
+  const poseRef = useRef<HTMLSpanElement>(null);
+  const nextObRef = useRef<HTMLSpanElement>(null);
+  const [heldPose, setHeldPose] = useState<Pose | null>(null);
 
   const isRacer = !!(room && session && room.racers.includes(session.playerId));
 
@@ -61,7 +83,7 @@ export function Race() {
       const places = new Map(horses.size ? order.map((l, i) => [l.id, i + 1]) : []);
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      renderer.frame({ width: W, height: H, lanes, drawings, horses, places });
+      renderer.frame({ width: W, height: H, lanes, obstacles: room.obstacles, drawings, horses, places });
 
       // countdown overlay
       const start = room.raceStartAt ?? now;
@@ -79,8 +101,19 @@ export function Race() {
 
       if (timerRef.current) timerRef.current.textContent = (Math.max(0, now - start) / 1000).toFixed(2) + 's';
 
+      // Pose and the obstacle coming up.
       const mine = horses.get(session.playerId);
+      if (poseRef.current) poseRef.current.textContent = mine ? POSE_LABEL[mine.pose] : '—';
+      if (nextObRef.current) {
+        const pos = mine?.pos ?? 0;
+        const next = room.obstacles.find((o) => o.at > pos);
+        nextObRef.current.textContent = next
+          ? `${OBSTACLE_LABEL[next.kind]} in ${Math.max(0, Math.round(next.at - pos))}m`
+          : 'clear track';
+        nextObRef.current.className = next && next.at - pos < 12 ? 'next-ob soon' : 'next-ob';
+      }
       if (mine && boostRef.current && windRef.current) {
+        if (voiceRef.current) voiceRef.current.style.width = `${mine.voice * 100}%`;
         boostRef.current.style.width = `${mine.boost * 100}%`;
         windRef.current.style.width = `${(1 - mine.fatigue) * 100}%`;
         windRef.current.classList.toggle('low', mine.fatigue > 0.5);
@@ -97,13 +130,26 @@ export function Race() {
   useEffect(() => {
     if (!isRacer) return;
     const down = (e: KeyboardEvent) => {
+      if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        setHeldPose('DUCK');
+        return;
+      }
+      if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        setHeldPose(e.shiftKey ? 'BIGJUMP' : 'JUMP');
+        return;
+      }
       if (e.code !== 'Space') return;
       e.preventDefault();
       if (e.repeat) return; // holding space doesn't count
       giddyUp();
       setPressed(true);
     };
-    const up = (e: KeyboardEvent) => e.code === 'Space' && setPressed(false);
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setPressed(false);
+      if (e.code === 'ArrowDown' || e.code === 'ArrowUp') setHeldPose(null);
+    };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => {
@@ -111,6 +157,70 @@ export function Race() {
       window.removeEventListener('keyup', up);
     };
   }, [isRacer]);
+
+  // Hold a pose on the server while a key/button is down; it expires if we stop.
+  const posedRef = useRef(false);
+  useEffect(() => {
+    if (!isRacer) return;
+    if (!heldPose) {
+      // Only release a pose we actually set: an unprompted RUN would override the voice.
+      if (posedRef.current) setPose('RUN');
+      posedRef.current = false;
+      return;
+    }
+    posedRef.current = true;
+    setPose(heldPose);
+    const id = setInterval(() => setPose(heldPose), POSE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [isRacer, heldPose]);
+
+  // ---- microphone ----
+  const stopMic = () => {
+    micRef.current?.stop();
+    micRef.current = null;
+    readingRef.current = { level: 0, pitch: 0, base: 0 };
+    setMicOn(false);
+  };
+
+  const toggleMic = async () => {
+    setMicError(null);
+    if (micRef.current) {
+      localStorage.setItem(MIC_PREF, 'off');
+      shout(0);
+      stopMic();
+      return;
+    }
+    try {
+      micRef.current = await startMic((r) => (readingRef.current = r));
+      setMicOn(true);
+      localStorage.setItem(MIC_PREF, 'on');
+    } catch (e) {
+      setMicError(e instanceof MicError ? `${e.message} — ${e.fix}` : 'could not use the microphone');
+      setMicOn(false);
+    }
+  };
+
+  // Remember the choice, but the browser still asks for permission per session.
+  useEffect(() => {
+    if (!isRacer || localStorage.getItem(MIC_PREF) !== 'on') return;
+    void toggleMic();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRacer]);
+
+  useEffect(() => () => stopMic(), []);
+
+  // The mic level is sampled every frame; the server only needs ~10 updates a second.
+  useEffect(() => {
+    if (!isRacer || !micOn) return;
+    let last = -1;
+    const id = setInterval(() => {
+      const { level, pitch, base } = readingRef.current;
+      if (level === 0 && last === 0) return; // stay quiet while quiet
+      last = level;
+      shout(level, pitch, base);
+    }, SHOUT_SEND_MS);
+    return () => clearInterval(id);
+  }, [isRacer, micOn]);
 
   return (
     <div className="page race-page">
@@ -140,12 +250,59 @@ export function Race() {
               </div>
             </div>
             <div className="meter">
+              <span>VOICE</span>
+              <div className="bar">
+                <div ref={voiceRef} className="fill voice" />
+              </div>
+              <button className={`mic ${micOn ? 'on' : ''}`} onClick={toggleMic} title="shout to run faster">
+                {micOn ? '🎤 ON' : '🎤 TURN ON'}
+              </button>
+            </div>
+            <div className="meter">
               <span>WIND</span>
               <div className="bar">
                 <div ref={windRef} className="fill wind" />
               </div>
             </div>
-            <p className="hint">tap in a rhythm. frantic mashing exhausts your horse.</p>
+            <div className="pose-row">
+              <span className="pose" ref={poseRef}>
+                RUNNING
+              </span>
+              <span className="next-ob" ref={nextObRef} />
+              {!micOn && <span className="mic-hint">mic off — your voice does nothing</span>}
+            </div>
+            <div className="pose-keys">
+              <button
+                className={heldPose === 'DUCK' ? 'held' : ''}
+                onPointerDown={(e) => (e.preventDefault(), setHeldPose('DUCK'))}
+                onPointerUp={() => setHeldPose(null)}
+                onPointerLeave={() => setHeldPose(null)}
+              >
+                ↓ DUCK
+              </button>
+              <button
+                className={heldPose === 'JUMP' ? 'held' : ''}
+                onPointerDown={(e) => (e.preventDefault(), setHeldPose('JUMP'))}
+                onPointerUp={() => setHeldPose(null)}
+                onPointerLeave={() => setHeldPose(null)}
+              >
+                ↑ JUMP
+              </button>
+              <button
+                className={heldPose === 'BIGJUMP' ? 'held' : ''}
+                onPointerDown={(e) => (e.preventDefault(), setHeldPose('BIGJUMP'))}
+                onPointerUp={() => setHeldPose(null)}
+                onPointerLeave={() => setHeldPose(null)}
+              >
+                ⇈ BIG
+              </button>
+            </div>
+            <p className="hint">
+              talk to keep moving, louder runs faster. drop to a low voice to duck, shout to
+              jump, scream to jump big. no mic? tap SPACE for speed and ↓ / ↑ / shift+↑ for
+              the obstacles.
+            </p>
+            {micError && <p className="error">{micError}</p>}
           </div>
           <button
             className={`giddy ${pressed ? 'pressed' : ''}`}

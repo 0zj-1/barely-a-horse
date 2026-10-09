@@ -10,13 +10,15 @@ import {
   type PlayerStatus,
   type RaceResult,
   type RoomPhase,
+  type Obstacle,
+  type Pose,
   type RoomSnapshot,
   type ServerEventData,
   type ServerEventName,
 } from '@bah/shared';
 import { BotDriver } from './bots';
 import { randomId, randomToken } from './ids';
-import { RaceSim } from './race';
+import { RaceSim, makeObstacles } from './race';
 
 /**
  * One client connection, whatever the transport (Node `ws` or a Durable Object
@@ -52,6 +54,7 @@ export class Room {
   players = new Map<PlayerId, Player>();
   hostId: PlayerId | null = null;
   racers: PlayerId[] = [];
+  obstacles: Obstacle[] = [];
   race: RaceSim | null = null;
   private bots: BotDriver | null = null;
   results: RaceResult[] | null = null;
@@ -285,6 +288,7 @@ export class Room {
     this.race = null;
     this.results = null;
     this.racers = [];
+    this.obstacles = [];
     for (const p of this.players.values()) {
       p.drawing = p.isBot ? botDrawing() : null;
       p.status = p.isBot ? 'READY' : 'DRAWING';
@@ -308,10 +312,12 @@ export class Room {
     this.racers = racers.map((p) => p.id);
     this.results = null;
     const startAt = Date.now() + RACE.countdownMs;
+    this.obstacles = makeObstacles();
     this.race = new RaceSim(
       racers.map((p) => ({ id: p.id, nickname: p.nickname })),
       startAt,
       (e) => this.emit('race:event', e),
+      this.obstacles,
     );
     this.bots = new BotDriver(racers.filter((p) => p.isBot).map((p) => p.id));
     this.broadcast();
@@ -366,6 +372,14 @@ export class Room {
     if (this.phase === 'RACING' && this.race) this.race.press(playerId, Date.now());
   }
 
+  shout(playerId: PlayerId, level: number, pitchHz?: number, pitchBase?: number) {
+    if (this.phase === 'RACING' && this.race) this.race.shout(playerId, level, Date.now(), pitchHz, pitchBase);
+  }
+
+  setPose(playerId: PlayerId, pose: Pose) {
+    if (this.phase === 'RACING' && this.race) this.race.setPose(playerId, pose, Date.now());
+  }
+
   private clearTimers() {
     if (this.timer) clearInterval(this.timer);
     if (this.resultsTimer) clearTimeout(this.resultsTimer);
@@ -400,6 +414,7 @@ export class Room {
       racers: this.racers,
       raceStartAt: this.race?.startAt ?? null,
       results: this.results,
+      obstacles: this.obstacles,
       serverNow: Date.now(),
     };
   }

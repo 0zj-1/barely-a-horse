@@ -108,6 +108,19 @@ input {
 .fill { height: 100%; transition: width 80ms linear; }
 .fill.boost { background: var(--accent); }
 .fill.wind { background: #6a6; }
+.fill.voice { background: #d87cc0; }
+.meter .mic { font-size: 11px; padding: 2px 6px; }
+.mic-check { display: flex; flex-direction: column; gap: 6px; width: 100%; align-items: center; }
+.mic-check .bar { width: 100%; height: 12px; border: 1px solid var(--ink); background: #fff; }
+.pose-row { display: flex; align-items: baseline; gap: 10px; }
+.pose { font-weight: 900; font-size: 15px; letter-spacing: 0.04em; }
+.next-ob { font-size: 12px; opacity: 0.7; }
+.mic-hint { font-size: 11px; color: var(--red); }
+.next-ob.soon { opacity: 1; font-weight: bold; color: var(--red); }
+.pose-keys { display: flex; gap: 6px; }
+.pose-keys button { font-size: 12px; padding: 4px 8px; flex: 1; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.pose-keys button.held { background: var(--accent); transform: translate(1px, 1px); box-shadow: none; }
+.meter .mic.on { background: #d87cc0; }
 .fill.wind.low { background: var(--red); }
 .giddy { font-size: 34px; font-weight: 900; padding: 18px 44px; background: var(--accent); display: flex; flex-direction: column; align-items: center; user-select: none; -webkit-user-select: none; touch-action: manipulation; transform: rotate(-1deg); }
 .giddy small { font-size: 11px; font-weight: normal; }

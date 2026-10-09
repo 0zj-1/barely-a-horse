@@ -91,6 +91,28 @@ intact. Strokes are drawn as straight segments with no smoothing. The gallop (bo
 squash/stretch, swaying of the bottom ~45% of the drawing like legs) is applied at render time
 and never changes the stored strokes.
 
+**Voice.** The microphone is an optional second control, and it never replaces tapping.
+The browser measures loudness and pitch locally (no audio is recorded or uploaded) and sends
+two numbers; the server decides everything else.
+
+- Speed: tapping and shouting combine as `max(tap, voice) + 0.45 * min(tap, voice)`, capped,
+  so either input alone is competitive and doing both is a little better, never double.
+  Shouting tires the horse, and one long unbroken scream tires it fastest — take a breath.
+- Pose: a low voice ducks, loud jumps, very loud jumps big; anything else just runs, so
+  going quiet costs you speed but never changes what the horse is doing. "Low" is measured
+  against the player's own speaking pitch (learnt while they talk), so a deep voice isn't
+  stuck in a permanent crouch. `poseForVoice` in `shared/src/config.ts` is the single source
+  of truth. The server rejects levels outside 0..1 rather than clamping, so `level: 999`
+  buys nothing.
+- Without a mic: ↓ / ↑ / shift+↑ (or the on-screen buttons) hold the same poses. Those are
+  re-sent while held and expire server-side, so a dropped connection can't leave a horse
+  stuck in a crouch.
+
+**Obstacles.** Each race gets 7 obstacles at the same distances in every lane: a low bar to
+duck, a hurdle to jump, and a wall that needs a big jump. Clearing one costs a little speed
+(`poseSpeedFactor`); hitting one cuts your speed for ~0.9s and adds fatigue. Bots read the
+obstacle ahead and get it right 60-95% of the time, depending on the bot.
+
 **Bots.** If the host starts with fewer than 2 ready horses, the server fills the empty
 lanes with bots, so you can race alone. Between races the host can also add bots
 ("+ ADD BOT") or remove them (×). Bots live only on the server: they have no socket, never
@@ -127,3 +149,7 @@ has been disconnected for 10 s.
   daily duration allowance. That is plenty for a party game, but not built for heavy traffic.
 - No spectator lanes: players who join mid-race watch, then join the next race.
 - Balance numbers live in `shared/src/config.ts` (`RACE`).
+- Microphone access needs a secure page: the deployed https address or localhost. Over plain
+  http (a LAN IP like http://192.168.x.x:5173) browsers hide the mic entirely, and the in-app
+  browser pane of some desktop apps blocks capture. The lobby has a "test my voice" check that
+  reports exactly which of these is in the way.

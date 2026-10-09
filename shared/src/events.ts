@@ -30,6 +30,13 @@ export interface ClientToServerEvents {
   'host:removeBot': (p: { playerId: PlayerId }, ack: Ack) => void;
 
   'race:giddy': () => void;
+  /**
+   * Mic loudness 0..1, pitch in Hz and the player's own normal pitch (0 = unknown).
+   * Advisory: the server clamps these and owns the speed.
+   */
+  'race:shout': (p: { level: number; pitch?: number; base?: number }) => void;
+  /** Fallback pose control for players without a microphone. Re-sent while held. */
+  'race:pose': (p: { pose: import('./types').Pose }) => void;
 }
 
 export interface ServerToClientEvents {

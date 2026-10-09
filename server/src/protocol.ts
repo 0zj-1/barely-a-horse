@@ -7,8 +7,11 @@ import {
   type ClientMessage,
   type Drawing,
   type PlayerId,
+  type Pose,
 } from '@bah/shared';
 import type { Conn, Room } from './room';
+
+const POSES: Pose[] = ['RUN', 'DUCK', 'JUMP', 'BIGJUMP'];
 
 /**
  * Transport-independent message handling, shared by the Node server and the
@@ -85,6 +88,14 @@ export function handleMessage(room: Room | undefined, conn: Conn, raw: string) {
 
     case 'race:giddy':
       if (room && me) room.press(me);
+      return;
+
+    case 'race:shout':
+      if (room && me && typeof p.level === 'number') room.shout(me, p.level, p.pitch, p.base);
+      return;
+
+    case 'race:pose':
+      if (room && me && POSES.includes(p.pose)) room.setPose(me, p.pose);
       return;
 
     case 'player:startDrawing':

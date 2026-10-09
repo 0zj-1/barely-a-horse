@@ -31,6 +31,10 @@ function prepare(d: Drawing): Prepared | null {
 }
 
 export interface HorseAnim {
+  /** How far off the ground, in pixels (the caller keeps it inside the lane). */
+  lift?: number;
+  /** 0 = upright, 1 = fully crouched. */
+  crouch?: number;
   /** Gait phase in radians. */
   phase: number;
   /** 0 = standing, 1 = full gallop. */
@@ -62,9 +66,12 @@ export function drawHorse(
   const bw = bbox.maxX - bbox.minX || 1;
   const bh = bbox.maxY - bbox.minY || 1;
 
+  const lift = anim.lift ?? 0;
+  const air = Math.min(1, lift / (h * 0.35)); // 0..1, for the tilt and bounce
+  const crouch = anim.crouch ?? 0;
   const k = anim.intensity;
   const ph = anim.phase;
-  let bounce = -Math.abs(Math.sin(ph)) * h * 0.1 * k;
+  let bounce = -Math.abs(Math.sin(ph)) * h * 0.1 * k * (1 - air);
   let rot = Math.sin(ph) * 0.07 * k;
   const stretch = 1 + Math.sin(ph * 2) * 0.07 * k;
   let legAmp = bw * 0.09 * k;
@@ -83,10 +90,16 @@ export function drawHorse(
     legAmp *= 0.3;
   }
 
+  // Jumping lifts the whole horse off the ground and tips its nose up;
+  // crouching squashes it down without changing the drawing itself.
+  rot -= air * 0.14;
+  const squashY = 1 - crouch * 0.4;
+  const squashX = 1 + crouch * 0.14;
+
   ctx.save();
-  ctx.translate(cx + shakeX, cy + h / 2 + bounce); // pivot at the feet
+  ctx.translate(cx + shakeX, cy + h / 2 + bounce - lift); // pivot at the feet
   ctx.rotate(rot);
-  ctx.scale(fit.scale * stretch, fit.scale / stretch);
+  ctx.scale(fit.scale * stretch * squashX, (fit.scale / stretch) * squashY);
   ctx.translate(fit.ox, fit.oy - bh / 2);
   ctx.strokeStyle = INK;
   ctx.fillStyle = INK;

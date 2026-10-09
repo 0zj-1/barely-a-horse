@@ -1,4 +1,13 @@
-import { RACE, type Drawing, type HorseTick, type PlayerId, type RaceTick } from '@bah/shared';
+import {
+  OBSTACLE_LABEL,
+  RACE,
+  type Drawing,
+  type HorseTick,
+  type Obstacle,
+  type PlayerId,
+  type Pose,
+  type RaceTick,
+} from '@bah/shared';
 import { drawHorse, INK } from './horse';
 
 export interface Lane {
@@ -10,6 +19,11 @@ export interface Lane {
 interface HorseView {
   pos: number;
   vel: number;
+  voice: number;
+  pose: Pose;
+  /** Animated towards the pose: height off the ground and how crouched. */
+  air: number;
+  crouch: number;
   phase: number;
   effect: string | null;
   finished: boolean;
@@ -56,12 +70,13 @@ export class TrackRenderer {
     width: number;
     height: number;
     lanes: Lane[];
+    obstacles: Obstacle[];
     drawings: Record<PlayerId, Drawing>;
     horses: Map<PlayerId, HorseTick>;
     places: Map<PlayerId, number>;
   }) {
     const { ctx, views } = this;
-    const { width: W, height: H, lanes, drawings, horses, places } = opts;
+    const { width: W, height: H, lanes, obstacles, drawings, horses, places } = opts;
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
@@ -69,14 +84,24 @@ export class TrackRenderer {
     for (const lane of lanes) {
       const t = horses.get(lane.id);
       let v = views.get(lane.id);
-      if (!v) views.set(lane.id, (v = { pos: 0, vel: 0, phase: Math.random() * 6, effect: null, finished: false }));
+      if (!v)
+        views.set(
+          lane.id,
+          (v = { pos: 0, vel: 0, voice: 0, pose: 'RUN', air: 0, crouch: 0, phase: Math.random() * 6, effect: null, finished: false }),
+        );
       if (t) {
         v.pos = t.pos;
         v.vel = t.vel;
+        v.voice = t.voice;
+        v.pose = t.pose;
         v.effect = t.effect;
         v.finished = t.finished;
       }
       v.phase += dt * (1.5 + v.vel * 1.6);
+      const airTarget = v.pose === 'BIGJUMP' ? 1.6 : v.pose === 'JUMP' ? 1 : 0;
+      const crouchTarget = v.pose === 'DUCK' ? 1 : 0;
+      v.air += (airTarget - v.air) * Math.min(1, dt * (airTarget > v.air ? 14 : 9));
+      v.crouch += (crouchTarget - v.crouch) * Math.min(1, dt * 12);
     }
 
     // ---- layout ----
@@ -87,7 +112,7 @@ export class TrackRenderer {
     const trackBottom = topPad + laneH * lanes.length;
     const visibleM = Math.max(16, Math.min(34, W / 38));
     const ppm = W / visibleM;
-    const horseH = laneH * 0.78;
+    const horseH = laneH * 0.68; // leaves headroom for jumping
     const horseW = Math.min(horseH * 1.6, 5 * ppm);
 
     // ---- camera: keep the leading group in view ----
@@ -156,6 +181,19 @@ export class TrackRenderer {
       ctx.globalAlpha = 1;
     });
 
+    // obstacles: identical in every lane
+    for (const ob of obstacles) {
+      const x = sx(ob.at);
+      if (x < -40 || x > W + 40) continue;
+      for (let i = 0; i < lanes.length; i++) {
+        drawObstacle(ctx, ob, x, trackTop + i * laneH, laneH);
+      }
+      ctx.fillStyle = INK;
+      ctx.font = '10px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(OBSTACLE_LABEL[ob.kind], x, trackBottom + 30);
+    }
+
     // start line
     const sxs = sx(0);
     ctx.lineWidth = 3;
@@ -190,13 +228,17 @@ export class TrackRenderer {
       const d = drawings[lane.id];
       const cy = trackTop + i * laneH + laneH / 2 + laneH * 0.02;
       const x = sx(v.pos); // horse's nose is at its position
-      const moving = Math.min(1, v.vel / 6);
+      // A horse being shouted at runs more frantically.
+      const moving = Math.min(1.35, v.vel / 6 + v.voice * 0.35);
       if (d) {
         drawHorse(ctx, d, x - horseW / 2, cy, horseW, horseH, {
           phase: v.phase,
           intensity: moving,
           effect: v.effect,
           time: now,
+          // Jump as high as the lane allows, and no higher.
+          lift: Math.min(v.air * horseH * 0.35, laneH * 0.5 - horseH * 0.4),
+          crouch: v.crouch,
         });
       } else {
         ctx.fillStyle = INK;
@@ -272,4 +314,41 @@ export function ordinal(n: number) {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+
+/** DUCK = a bar overhead, JUMP = a low fence, BIGJUMP = a tall wall. */
+function drawObstacle(ctx: CanvasRenderingContext2D, ob: Obstacle, x: number, laneTop: number, laneH: number) {
+  const ground = laneTop + laneH - 2;
+  ctx.strokeStyle = INK;
+  ctx.fillStyle = INK;
+  ctx.lineWidth = 2;
+  if (ob.kind === 'DUCK') {
+    const barY = laneTop + laneH * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(x - 1, laneTop + 2);
+    ctx.lineTo(x - 1, barY);
+    ctx.moveTo(x + 12, laneTop + 2);
+    ctx.lineTo(x + 12, barY);
+    ctx.stroke();
+    ctx.fillRect(x - 6, barY, 24, 5); // the bar you duck under
+    return;
+  }
+  const h = ob.kind === 'BIGJUMP' ? laneH * 0.52 : laneH * 0.26;
+  ctx.beginPath();
+  ctx.moveTo(x, ground);
+  ctx.lineTo(x, ground - h);
+  ctx.lineTo(x + 14, ground - h);
+  ctx.lineTo(x + 14, ground);
+  ctx.stroke();
+  // rails
+  ctx.lineWidth = 1.5;
+  const rails = ob.kind === 'BIGJUMP' ? 3 : 1;
+  for (let i = 1; i <= rails; i++) {
+    const y = ground - (h * i) / (rails + 0.5);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 14, y);
+    ctx.stroke();
+  }
 }

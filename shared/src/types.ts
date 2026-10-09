@@ -45,8 +45,23 @@ export interface RoomSnapshot {
   /** Server epoch ms when the race starts (COUNTDOWN / RACING). */
   raceStartAt: number | null;
   results: RaceResult[] | null;
+  /** Obstacles for the current race (empty in the lobby). */
+  obstacles: Obstacle[];
   /** Server clock at the time this snapshot was sent. */
   serverNow: number;
+}
+
+/** What the horse is doing right now. Driven by your voice (or the fallback keys). */
+export type Pose = 'RUN' | 'DUCK' | 'JUMP' | 'BIGJUMP';
+
+/** Obstacles sit at the same distances in every lane. */
+export type ObstacleKind = 'DUCK' | 'JUMP' | 'BIGJUMP';
+
+export interface Obstacle {
+  /** Meters from the start line. */
+  at: number;
+  /** The pose needed to get past it. */
+  kind: ObstacleKind;
 }
 
 export interface HorseTick {
@@ -55,7 +70,9 @@ export interface HorseTick {
   pos: number;
   /** m/s */
   vel: number;
-  boost: number; // 0..1
+  boost: number; // 0..1 — from tapping
+  voice: number; // 0..1 — from shouting
+  pose: Pose;
   fatigue: number; // 0..1
   finished: boolean;
   /** Short-lived modifier active on this horse, if any. */
