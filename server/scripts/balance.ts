@@ -23,7 +23,7 @@ for (const [name, p] of Object.entries(PLAYERS)) {
     const obstacles = makeObstacles();
     const sim = new RaceSim([{ id: 'a', nickname: 'a' }], 0, () => hits++, obstacles);
     const bots = p.taps === -1 ? new BotDriver(['a']) : null;
-    let now = 0, nextPress = 0;
+    let now = 0, nextPress = 0, decidedFor = -1, willPose = false;
     while (sim.step(now, 0.05) && now < 60000) {
       now += 50;
       const t = now / 1000;
@@ -35,8 +35,12 @@ for (const [name, p] of Object.entries(PLAYERS)) {
         const h = sim.horses[0];
         const ob = obstacles[h.nextObstacle];
         if (ob && p.poseSkill !== null && ob.at - h.pos < Math.max(4, h.vel * 1.1)) {
-          const pose: Pose = Math.random() < p.poseSkill ? POSE_CLEARS[ob.kind][0] : 'RUN';
-          sim.setPose('a', pose, now);
+          // Decide once per obstacle, like a player does — not afresh every tick.
+          if (decidedFor !== h.nextObstacle) {
+            decidedFor = h.nextObstacle;
+            willPose = Math.random() < p.poseSkill;
+          }
+          if (willPose) sim.setPose('a', POSE_CLEARS[ob.kind][0], now);
         }
       }
     }

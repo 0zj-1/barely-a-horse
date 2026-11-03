@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { OBSTACLE_LABEL, RACE, type Pose } from '@bah/shared';
+import { OBSTACLE_LABEL, RACE, poseForVoice, type Pose } from '@bah/shared';
 import { serverNow } from '../net/socket';
 import { TrackRenderer, sampleTicks, type Lane } from '../render/track';
 import { startMic, micBlockedReason, MicError, type Mic, type MicReading } from '../net/mic';
@@ -7,7 +7,7 @@ import { getStore, giddyUp, raceBuffer, setPose, shout, useStore } from '../stor
 import { RoomHeader } from './Lobby';
 
 const INTERP_DELAY = 110; // ms behind the server, so we always have two ticks to blend
-const SHOUT_SEND_MS = 100; // how often the mic level goes to the server
+const SHOUT_SEND_MS = 50; // how often the mic level goes to the server
 const MIC_PREF = 'bah.mic';
 const POSE_REFRESH_MS = 300; // keyboard/touch poses expire on the server unless refreshed
 
@@ -39,6 +39,8 @@ export function Race() {
   const poseRef = useRef<HTMLSpanElement>(null);
   const nextObRef = useRef<HTMLSpanElement>(null);
   const [heldPose, setHeldPose] = useState<Pose | null>(null);
+  /** What our own input says right now, shown without waiting for the server to echo it. */
+  const localPoseRef = useRef<Pose | null>(null);
 
   const isRacer = !!(room && session && room.racers.includes(session.playerId));
 
@@ -48,6 +50,7 @@ export function Race() {
     const wrap = wrapRef.current!;
     const ctx = canvas.getContext('2d')!;
     const renderer = new TrackRenderer(ctx);
+    if (import.meta.env.DEV) (window as unknown as { __cam: unknown }).__cam = renderer.lastCam;
     let raf = 0;
     let W = 0, H = 0, dpr = 1;
 
@@ -101,8 +104,10 @@ export function Race() {
 
       if (timerRef.current) timerRef.current.textContent = (Math.max(0, now - start) / 1000).toFixed(2) + 's';
 
-      // Pose and the obstacle coming up.
+      // Pose and the obstacle coming up. Our own pose is shown from local input:
+      // the server agrees a moment later, but waiting for it would feel sluggish.
       const mine = horses.get(session.playerId);
+      if (mine && localPoseRef.current) mine.pose = localPoseRef.current;
       if (poseRef.current) poseRef.current.textContent = mine ? POSE_LABEL[mine.pose] : '—';
       if (nextObRef.current) {
         const pos = mine?.pos ?? 0;
@@ -166,19 +171,22 @@ export function Race() {
       // Only release a pose we actually set: an unprompted RUN would override the voice.
       if (posedRef.current) setPose('RUN');
       posedRef.current = false;
+      if (!micOn) localPoseRef.current = null;
       return;
     }
     posedRef.current = true;
+    localPoseRef.current = heldPose;
     setPose(heldPose);
     const id = setInterval(() => setPose(heldPose), POSE_REFRESH_MS);
     return () => clearInterval(id);
-  }, [isRacer, heldPose]);
+  }, [isRacer, heldPose, micOn]);
 
   // ---- microphone ----
   const stopMic = () => {
     micRef.current?.stop();
     micRef.current = null;
     readingRef.current = { level: 0, pitch: 0, base: 0 };
+    localPoseRef.current = null;
     setMicOn(false);
   };
 
@@ -215,12 +223,13 @@ export function Race() {
     let last = -1;
     const id = setInterval(() => {
       const { level, pitch, base } = readingRef.current;
+      if (!heldPose) localPoseRef.current = poseForVoice(level, pitch, base);
       if (level === 0 && last === 0) return; // stay quiet while quiet
       last = level;
       shout(level, pitch, base);
     }, SHOUT_SEND_MS);
     return () => clearInterval(id);
-  }, [isRacer, micOn]);
+  }, [isRacer, micOn, heldPose]);
 
   return (
     <div className="page race-page">

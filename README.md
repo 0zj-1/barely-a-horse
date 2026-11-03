@@ -54,7 +54,7 @@ client/   React + Vite + Canvas
   src/store.ts          client state machine, socket wiring, session handling
   src/net/socket.ts     socket, session token storage, server clock estimate
   src/render/horse.ts   draws the player's strokes + procedural gallop
-  src/render/track.ts   track, camera, lanes, interpolation
+  src/render/track.ts   track, camera, lanes, obstacles, interpolation
   src/screens/          Home/Joining, Lobby (+READY), Draw, Race (+COUNTDOWN), Results
 ```
 
@@ -113,6 +113,15 @@ duck, a hurdle to jump, and a wall that needs a big jump. Clearing one costs a l
 (`poseSpeedFactor`); hitting one cuts your speed for ~0.9s and adds fatigue. Bots read the
 obstacle ahead and get it right 60-95% of the time, depending on the bot.
 
+The timing window is deliberately forgiving on both sides (`poseEarlyMs` / `poseGraceMs`):
+posing up to ~320ms before an obstacle clears it, and a horse that arrives in the wrong pose
+waits ~260ms for a late one before falling. That covers the unavoidable lag — mic smoothing,
+the 50ms send interval, the network, and the 110ms the client renders behind the server —
+so the jump lands when it looks like it should. For the same reason poses read the level the
+mic just reported rather than the smoothed one the speed uses, and the client shows its own
+pose from local input instead of waiting for the server to echo it back. The run-up where
+posing counts is drawn on the track as a shaded band.
+
 **Bots.** If the host starts with fewer than 2 ready horses, the server fills the empty
 lanes with bots, so you can race alone. Between races the host can also add bots
 ("+ ADD BOT") or remove them (×). Bots live only on the server: they have no socket, never
@@ -129,6 +138,12 @@ On Cloudflare, each room is a Durable Object named by its code. Its game state l
 memory and its timers keep it awake while anyone is in the room. An abandoned code is
 forgotten after 5 minutes (alarm). The Node server runs the same `Room` + `protocol.ts`
 code for all rooms in one process.
+
+**Camera.** Your own horse owns the shot: it sits at `ANCHOR` (42%) across the view, and the
+camera may drift at most `CAM_DRIFT` (20% of a screen) towards the pack. A runaway leader
+tilts the frame a little without ever taking it off you — measured with a 24m gap, the horse
+stayed between 40% and 65% of the width. Spectators, who have no horse of their own, keep
+following the leading group instead.
 
 **Sync.** 20 Hz position snapshots. The client estimates the server clock offset, renders
 110 ms in the past, and interpolates between snapshots. The countdown uses the server's

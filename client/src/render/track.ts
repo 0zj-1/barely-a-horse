@@ -29,6 +29,11 @@ interface HorseView {
   finished: boolean;
 }
 
+/** Where your own horse sits across the view (0 = left edge, 1 = right edge). */
+const ANCHOR = 0.42;
+/** How far the shot may drift off that anchor, as a fraction of the visible track. */
+const CAM_DRIFT = 0.2;
+
 const BG = '#eef3e6';
 const LINE = '#111';
 const FAINT = 'rgba(17,17,17,0.18)';
@@ -62,6 +67,8 @@ export class TrackRenderer {
   private views = new Map<PlayerId, HorseView>();
   private camX = -10;
   private camReady = false;
+  /** Last frame's camera, so the view can be checked from the console in dev. */
+  readonly lastCam = { x: 0, visibleM: 0 };
   private lastFrame = performance.now();
 
   constructor(private ctx: CanvasRenderingContext2D) {}
@@ -115,7 +122,7 @@ export class TrackRenderer {
     const horseH = laneH * 0.68; // leaves headroom for jumping
     const horseW = Math.min(horseH * 1.6, 5 * ppm);
 
-    // ---- camera: keep the leading group in view ----
+    // ---- camera ----
     // Follow horses still running (finished ones would drag the view past the line),
     // and widen the frame from the leader backwards to include as many as fit.
     const all = lanes.map((l) => views.get(l.id)!);
@@ -128,13 +135,27 @@ export class TrackRenderer {
     const focus = (leader + rear) / 2 - horseM / 2; // horses extend left of their nose
     // At the start, leave room left of the line for lane labels + the horses' bodies.
     const minCam = -(horseW + 150) / ppm;
-    const target = Math.min(RACE.distance + 10 - visibleM, Math.max(minCam, focus - visibleM * 0.5 + 1));
+    let target = Math.min(RACE.distance + 10 - visibleM, Math.max(minCam, focus - visibleM * 0.5 + 1));
+
+    // Your own horse owns the camera: it sits at ANCHOR across the view, and the shot
+    // may drift at most CAM_DRIFT of a screen towards the action. A runaway leader
+    // pulls the frame a little, never off you. Spectators just follow the pack.
+    const mine = lanes.find((l) => l.isMe);
+    const myView = mine ? views.get(mine.id) : undefined;
+    if (myView) {
+      const locked = myView.pos - horseM / 2 - visibleM * ANCHOR;
+      const drift = visibleM * CAM_DRIFT;
+      target = Math.max(locked - drift, Math.min(locked + drift, target));
+      target = Math.max(minCam, target);
+    }
     if (!this.camReady) {
       this.camX = target; // e.g. joining mid-race
       this.camReady = horses.size > 0; // keep snapping until real positions arrive
     } else {
       this.camX += (target - this.camX) * Math.min(1, dt * 2.5);
     }
+    this.lastCam.x = this.camX;
+    this.lastCam.visibleM = visibleM;
     const sx = (m: number) => (m - this.camX) * ppm;
 
     // ---- track ----
@@ -181,10 +202,22 @@ export class TrackRenderer {
       ctx.globalAlpha = 1;
     });
 
-    // obstacles: identical in every lane
+    // obstacles: identical in every lane, each with the run-up where posing counts
+    const takeoffM = (RACE.poseEarlyMs / 1000) * RACE.baseSpeed;
     for (const ob of obstacles) {
       const x = sx(ob.at);
       if (x < -40 || x > W + 40) continue;
+      const takeoffX = sx(ob.at - takeoffM);
+      ctx.fillStyle = 'rgba(17,17,17,0.05)';
+      ctx.fillRect(takeoffX, trackTop, x - takeoffX, trackBottom - trackTop);
+      ctx.strokeStyle = FAINT;
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(takeoffX, trackTop);
+      ctx.lineTo(takeoffX, trackBottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
       for (let i = 0; i < lanes.length; i++) {
         drawObstacle(ctx, ob, x, trackTop + i * laneH, laneH);
       }

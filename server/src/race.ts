@@ -48,6 +48,10 @@ interface HorseState {
   manualPoseAt: number;
   /** Index of the next obstacle this horse has to deal with. */
   nextObstacle: number;
+  /** When each pose was last held, for the "you jumped early" window. */
+  poseSeenAt: Record<Pose, number>;
+  /** An obstacle already passed, still waiting to see a late pose. */
+  pending: { kind: ObstacleKind; deadline: number } | null;
   /** Seconds of uninterrupted shouting (resets when you take a breath). */
   shoutHeldFor: number;
   fatigue: number;
@@ -59,7 +63,7 @@ interface HorseState {
   effect: { kind: EffectKind; label: string; until: number } | null;
 }
 
-type EffectKind = 'stumble' | 'zoomies' | 'confused' | 'crash';
+type EffectKind = 'stumble' | 'zoomies' | 'confused' | 'crash' | 'clear';
 
 const EFFECTS: { kind: EffectKind; label: string; durationMs: number; texts: string[] }[] = [
   {
@@ -84,6 +88,7 @@ const EFFECTS: { kind: EffectKind; label: string; durationMs: number; texts: str
 
 const EFFECT_SPEED: Record<EffectKind, (v: number) => number> = {
   crash: (v) => v * RACE.hitSpeedFactor,
+  clear: (v) => v, // just a label, no speed change
   stumble: (v) => v * 0.35,
   zoomies: (v) => v + 2.2,
   confused: (v) => v * 0.7,
@@ -122,6 +127,8 @@ export class RaceSim {
       manualPose: null,
       manualPoseAt: -Infinity,
       nextObstacle: 0,
+      poseSeenAt: { RUN: 0, DUCK: 0, JUMP: 0, BIGJUMP: 0 },
+      pending: null,
       shoutHeldFor: 0,
       fatigue: 0,
       noise: 0,
@@ -149,8 +156,21 @@ export class RaceSim {
   private poseFor(h: HorseState, now: number): Pose {
     if (h.manualPose && now - h.manualPoseAt < RACE.poseHoldMs) return h.manualPose;
     if (now - h.lastShoutAt > RACE.voiceTimeoutMs) return 'RUN'; // no mic, no pose control
-    // A deep voice crouches; loud jumps; very loud jumps big. Quiet just runs.
-    return poseForVoice(h.voice, h.pitchHz, h.pitchBase);
+    // Poses read the level the mic just reported, not the smoothed one the speed uses:
+    // waiting for the smoothing would put the jump a few metres late.
+    return poseForVoice(h.voiceTarget, h.pitchHz, h.pitchBase);
+  }
+
+  private faceplant(h: HorseState, kind: ObstacleKind, now: number) {
+    h.pending = null;
+    h.effect = { kind: 'crash', label: 'OOF', until: now + RACE.hitDurationMs };
+    h.fatigue = Math.min(1, h.fatigue + RACE.hitFatigue);
+    h.vel *= RACE.hitSpeedFactor;
+    this.onEvent({
+      playerId: h.id,
+      text: `${h.nickname} forgot to ${OBSTACLE_LABEL[kind].toLowerCase()}`,
+      t: now,
+    });
   }
 
   /** Keyboard / touch pose control, for players without a microphone. */
@@ -212,6 +232,7 @@ export class RaceSim {
       h.noise += (h.noiseTarget - h.noise) * Math.min(1, dt * 3);
 
       h.pose = this.poseFor(h, now);
+      h.poseSeenAt[h.pose] = now;
 
       if (h.effect && now >= h.effect.until) h.effect = null;
       // Random events: identical odds for every horse, none in the first 1.5s.
@@ -238,18 +259,28 @@ export class RaceSim {
       const prev = h.pos;
       h.pos += h.vel * dt;
 
-      // Obstacles: hold the right pose as you reach one, or faceplant.
+      // Obstacles: reaching one with the right pose clears it. Posing a moment early
+      // counts too, and a pose that lands just after still saves the horse — both sides
+      // are forgiving because the player is reacting to a screen that lags the server.
       while (h.nextObstacle < this.obstacles.length && h.pos >= this.obstacles[h.nextObstacle].at) {
         const ob = this.obstacles[h.nextObstacle++];
-        if (POSE_CLEARS[ob.kind].includes(h.pose)) continue;
-        h.effect = { kind: 'crash', label: 'OOF', until: now + RACE.hitDurationMs };
-        h.fatigue = Math.min(1, h.fatigue + RACE.hitFatigue);
-        h.vel *= RACE.hitSpeedFactor;
-        this.onEvent({
-          playerId: h.id,
-          text: `${h.nickname} forgot to ${OBSTACLE_LABEL[ob.kind].toLowerCase()}`,
-          t: now,
-        });
+        if (h.pending) this.faceplant(h, h.pending.kind, now); // never got the last one
+        const clears = POSE_CLEARS[ob.kind];
+        const early = clears.some((p) => now - h.poseSeenAt[p] <= RACE.poseEarlyMs);
+        if (early) {
+          h.effect = { kind: 'clear', label: 'YEP', until: now + 450 };
+        } else {
+          h.pending = { kind: ob.kind, deadline: now + RACE.poseGraceMs };
+        }
+      }
+
+      if (h.pending) {
+        if (POSE_CLEARS[h.pending.kind].includes(h.pose)) {
+          h.pending = null;
+          h.effect = { kind: 'clear', label: 'PHEW', until: now + 450 };
+        } else if (now >= h.pending.deadline) {
+          this.faceplant(h, h.pending.kind, now);
+        }
       }
 
       if (h.pos >= RACE.distance) {

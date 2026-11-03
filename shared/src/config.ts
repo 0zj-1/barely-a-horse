@@ -69,6 +69,13 @@ export const RACE = {
   obstacleStartAt: 16,
   obstacleEndGap: 10,
   obstacleMinGap: 8,
+  /**
+   * Obstacles are forgiving on both sides, because what you see is ~110ms behind the
+   * simulation: striking the pose this long before the obstacle still clears it...
+   */
+  poseEarlyMs: 320,
+  /** ...and the horse waits this long after the obstacle for a late pose before falling. */
+  poseGraceMs: 260,
   /** Hitting one: speed multiplier and how long it lasts. */
   hitSpeedFactor: 0.4,
   hitDurationMs: 900,
